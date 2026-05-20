@@ -1,0 +1,16 @@
+{
+  "name": "bot-farmeo-completo",
+  "version": "1.0.0",
+  "description": "Bot de bitacora de farmeo para Discord con modo solo, grupos, ranking, estado e historial.",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "deploy": "node deploy-commands.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7"
+  }
+}
