@@ -19,7 +19,6 @@ const db = require('./database');
 process.on('unhandledRejection', console.error);
 process.on('uncaughtException', console.error);
 
-// Servidor web para Render
 const server = http.createServer((req, res) => {
   res.writeHead(200);
   res.end('Bot farmeo activo');
@@ -77,21 +76,36 @@ const commands = [
   new SlashCommandBuilder()
     .setName('farm')
     .setDescription('Sistema de farmeo')
+
     .addSubcommandGroup(group =>
       group
         .setName('solo')
         .setDescription('Farmeo individual')
+
         .addSubcommand(sub =>
-          sub.setName('iniciar').setDescription('Iniciar farmeo solo')
+          sub
+            .setName('iniciar')
+            .setDescription('Iniciar farmeo solo')
+            .addAttachmentOption(opt =>
+              opt
+                .setName('foto')
+                .setDescription('Sube una foto como evidencia')
+                .setRequired(true)
+            )
         )
+
         .addSubcommand(sub =>
-          sub.setName('terminar').setDescription('Terminar farmeo solo')
+          sub
+            .setName('terminar')
+            .setDescription('Terminar farmeo solo')
         )
     )
+
     .addSubcommandGroup(group =>
       group
         .setName('grupo')
         .setDescription('Farmeo grupal')
+
         .addSubcommand(sub =>
           sub
             .setName('crear')
@@ -134,7 +148,10 @@ async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
   await rest.put(
-    Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
+    Routes.applicationGuildCommands(
+      process.env.CLIENT_ID,
+      process.env.GUILD_ID
+    ),
     { body: commands }
   );
 
@@ -163,7 +180,9 @@ function groupEmbed(groupId) {
       { name: 'Activos', value: activeText.slice(0, 1024) },
       { name: 'Ya salieron', value: closedText.slice(0, 1024) }
     )
-    .setFooter({ text: g.status === 'active' ? 'Usa los botones.' : 'Grupo terminado.' });
+    .setFooter({
+      text: g.status === 'active' ? 'Usa los botones.' : 'Grupo terminado.'
+    });
 }
 
 function groupButtons(groupId, disabled = false) {
@@ -238,11 +257,33 @@ client.on(Events.InteractionCreate, async interaction => {
         const sub = interaction.options.getSubcommand();
 
         if (group === 'solo' && sub === 'iniciar') {
-          const r = db.startSolo(guildId, interaction.user.id, username(interaction));
+          const foto = interaction.options.getAttachment('foto');
+
+          if (!foto || !foto.contentType || !foto.contentType.startsWith('image/')) {
+            return interaction.editReply(
+              '⚠️ Debes subir una imagen válida para iniciar farmeo.'
+            );
+          }
+
+          const r = db.startSolo(
+            guildId,
+            interaction.user.id,
+            username(interaction)
+          );
 
           if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
-          return interaction.editReply(`🟢 <@${interaction.user.id}> inició farmeo solo.`);
+          await sendOwnerDM(
+            `🟢 **${interaction.user.tag} inició farmeo**\n` +
+            `👤 Usuario: <@${interaction.user.id}>\n` +
+            `📅 Fecha: <t:${Math.floor(Date.now() / 1000)}:F>\n` +
+            `🖼️ Foto enviada: ${foto.url}`
+          );
+
+          return interaction.editReply({
+            content: `🟢 <@${interaction.user.id}> inició farmeo solo con evidencia.`,
+            files: [foto.url]
+          });
         }
 
         if (group === 'solo' && sub === 'terminar') {
@@ -251,7 +292,10 @@ client.on(Events.InteractionCreate, async interaction => {
           if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
           await sendOwnerDM(
-            `🔴 Farmeo solo terminado\nUsuario: ${interaction.user.tag}\nTiempo: ${fmt(r.duration_seconds)}`
+            `🔴 **${interaction.user.tag} terminó farmeo solo**\n` +
+            `👤 Usuario: <@${interaction.user.id}>\n` +
+            `📅 Fecha: <t:${Math.floor(Date.now() / 1000)}:F>\n` +
+            `⏱️ Tiempo farmeado: **${fmt(r.duration_seconds)}**`
           );
 
           return interaction.editReply(
@@ -287,7 +331,9 @@ client.on(Events.InteractionCreate, async interaction => {
         const st = db.activeStatus(guildId);
 
         const solo = st.solo.length
-          ? st.solo.map(s => `🟢 <@${s.user_id}> — desde ${rel(s.started_at)}`).join('\n')
+          ? st.solo.map(s =>
+              `🟢 <@${s.user_id}> — desde ${rel(s.started_at)}`
+            ).join('\n')
           : 'Nadie en farmeo solo.';
 
         const grupos = st.grupos.length
@@ -295,7 +341,9 @@ client.on(Events.InteractionCreate, async interaction => {
               const active = db.groupParticipants(g.id, false);
 
               const miembros = active.length
-                ? active.map(p => `- <@${p.user_id}> desde ${rel(p.started_at)}`).join('\n')
+                ? active.map(p =>
+                    `- <@${p.user_id}> desde ${rel(p.started_at)}`
+                  ).join('\n')
                 : 'Sin participantes activos.';
 
               return `👥 **Grupo #${g.id}: ${g.title}**\n${miembros}`;
@@ -357,12 +405,20 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (action === 'leave') {
-        const r = db.leaveGroup(interaction.guildId, groupId, interaction.user.id);
+        const r = db.leaveGroup(
+          interaction.guildId,
+          groupId,
+          interaction.user.id
+        );
 
         if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
         await sendOwnerDM(
-          `🚪 Salió de grupo\nUsuario: ${interaction.user.tag}\nGrupo: #${groupId} ${g.title}\nTiempo: ${fmt(r.duration_seconds)}`
+          `🚪 **${interaction.user.tag} salió de grupo**\n` +
+          `👤 Usuario: <@${interaction.user.id}>\n` +
+          `👥 Grupo: #${groupId} ${g.title}\n` +
+          `📅 Fecha: <t:${Math.floor(Date.now() / 1000)}:F>\n` +
+          `⏱️ Tiempo farmeado: **${fmt(r.duration_seconds)}**`
         );
 
         await refreshGroupMessage(interaction, groupId);
@@ -373,12 +429,21 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (action === 'end') {
-        const r = db.closeGroup(interaction.guildId, groupId, interaction.user.id, true);
+        const r = db.closeGroup(
+          interaction.guildId,
+          groupId,
+          interaction.user.id,
+          true
+        );
 
         if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
         await sendOwnerDM(
-          `🔴 Grupo terminado\nGrupo: #${groupId} ${g.title}\nCerrado por: ${interaction.user.tag}\nParticipantes cerrados: ${r.closed_count}`
+          `🔴 **Grupo terminado**\n` +
+          `👥 Grupo: #${groupId} ${g.title}\n` +
+          `👤 Cerrado por: <@${interaction.user.id}>\n` +
+          `📅 Fecha: <t:${Math.floor(Date.now() / 1000)}:F>\n` +
+          `👥 Participantes cerrados: **${r.closed_count}**`
         );
 
         await refreshGroupMessage(interaction, groupId);
