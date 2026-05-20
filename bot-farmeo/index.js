@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const http = require('http');
 const {
   Client,
   GatewayIntentBits,
@@ -15,12 +16,17 @@ const {
 
 const db = require('./database');
 
-process.on('unhandledRejection', error => {
-  console.error('Unhandled promise rejection:', error);
+process.on('unhandledRejection', console.error);
+process.on('uncaughtException', console.error);
+
+// Servidor web para Render
+const server = http.createServer((req, res) => {
+  res.writeHead(200);
+  res.end('Bot farmeo activo');
 });
 
-process.on('uncaughtException', error => {
-  console.error('Uncaught exception:', error);
+server.listen(process.env.PORT || 3000, () => {
+  console.log('Servidor web activo');
 });
 
 const client = new Client({
@@ -46,6 +52,16 @@ function username(interaction) {
   return interaction.member?.displayName || interaction.user.username;
 }
 
+async function sendOwnerDM(message) {
+  try {
+    if (!process.env.OWNER_ID) return;
+    const owner = await client.users.fetch(process.env.OWNER_ID);
+    await owner.send(message);
+  } catch (err) {
+    console.log('No pude enviar DM:', err.message);
+  }
+}
+
 function sinceFor(period) {
   const d = new Date();
 
@@ -55,16 +71,6 @@ function sinceFor(period) {
 
   d.setHours(0, 0, 0, 0);
   return d.getTime();
-}
-
-async function sendOwnerDM(message) {
-  try {
-    if (!process.env.OWNER_ID) return;
-    const owner = await client.users.fetch(process.env.OWNER_ID);
-    await owner.send(message);
-  } catch (err) {
-    console.log('No pude mandar DM:', err.message);
-  }
 }
 
 const commands = [
@@ -128,10 +134,7 @@ async function registerCommands() {
   const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
   await rest.put(
-    Routes.applicationGuildCommands(
-      process.env.CLIENT_ID,
-      process.env.GUILD_ID
-    ),
+    Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID),
     { body: commands }
   );
 
@@ -151,26 +154,16 @@ function groupEmbed(groupId) {
 
   const closedText = closed.length
     ? closed.map(p => `⚫ <@${p.user_id}> — ${fmt(p.duration_seconds)}`).join('\n')
-    : 'Nadie ha salido todavía.';
+    : 'Nadie ha salido.';
 
   return new EmbedBuilder()
     .setTitle(`🟢 Farmeo grupal #${groupId}`)
     .setDescription(`Grupo: **${g.title}**\nLíder: <@${g.leader_id}>`)
     .addFields(
-      {
-        name: 'Activos',
-        value: activeText.slice(0, 1024)
-      },
-      {
-        name: 'Ya salieron',
-        value: closedText.slice(0, 1024)
-      }
+      { name: 'Activos', value: activeText.slice(0, 1024) },
+      { name: 'Ya salieron', value: closedText.slice(0, 1024) }
     )
-    .setFooter({
-      text: g.status === 'active'
-        ? 'Usa los botones para unirte, salir o terminar.'
-        : 'Grupo terminado.'
-    });
+    .setFooter({ text: g.status === 'active' ? 'Usa los botones.' : 'Grupo terminado.' });
 }
 
 function groupButtons(groupId, disabled = false) {
@@ -213,7 +206,7 @@ async function refreshGroupMessage(interaction, groupId) {
       components: groupButtons(groupId, g.status !== 'active')
     });
   } catch (err) {
-    console.log('No pude actualizar mensaje del grupo:', err.message);
+    console.log('No pude actualizar grupo:', err.message);
   }
 }
 
@@ -223,7 +216,7 @@ client.once(Events.ClientReady, async c => {
   try {
     await registerCommands();
   } catch (err) {
-    console.error(err);
+    console.error('Error registrando comandos:', err);
   }
 });
 
@@ -245,40 +238,29 @@ client.on(Events.InteractionCreate, async interaction => {
         const sub = interaction.options.getSubcommand();
 
         if (group === 'solo' && sub === 'iniciar') {
-          const r = db.startSolo(
-            guildId,
-            interaction.user.id,
-            username(interaction)
-          );
+          const r = db.startSolo(guildId, interaction.user.id, username(interaction));
 
-          if (!r.ok) {
-            return interaction.editReply(`⚠️ ${r.reason}`);
-          }
+          if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
-          return interaction.editReply(
-            `🟢 <@${interaction.user.id}> inició farmeo solo.`
-          );
+          return interaction.editReply(`🟢 <@${interaction.user.id}> inició farmeo solo.`);
         }
 
         if (group === 'solo' && sub === 'terminar') {
           const r = db.endSolo(guildId, interaction.user.id);
 
-          if (!r.ok) {
-            return interaction.editReply(`⚠️ ${r.reason}`);
-          }
+          if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
           await sendOwnerDM(
             `🔴 Farmeo solo terminado\nUsuario: ${interaction.user.tag}\nTiempo: ${fmt(r.duration_seconds)}`
           );
 
           return interaction.editReply(
-            `🔴 <@${interaction.user.id}> terminó farmeo.\nTiempo: **${fmt(r.duration_seconds)}**`
+            `🔴 <@${interaction.user.id}> terminó farmeo solo.\nTiempo: **${fmt(r.duration_seconds)}**`
           );
         }
 
         if (group === 'grupo' && sub === 'crear') {
-          const title =
-            interaction.options.getString('nombre') || 'Farmeo';
+          const title = interaction.options.getString('nombre') || 'Farmeo';
 
           const r = db.createGroup(
             guildId,
@@ -288,9 +270,7 @@ client.on(Events.InteractionCreate, async interaction => {
             interaction.channelId
           );
 
-          if (!r.ok) {
-            return interaction.editReply(`⚠️ ${r.reason}`);
-          }
+          if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
           const msg = await interaction.editReply({
             embeds: [groupEmbed(r.group_id)],
@@ -307,9 +287,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const st = db.activeStatus(guildId);
 
         const solo = st.solo.length
-          ? st.solo.map(s =>
-              `🟢 <@${s.user_id}> — solo desde ${rel(s.started_at)}`
-            ).join('\n')
+          ? st.solo.map(s => `🟢 <@${s.user_id}> — desde ${rel(s.started_at)}`).join('\n')
           : 'Nadie en farmeo solo.';
 
         const grupos = st.grupos.length
@@ -320,26 +298,18 @@ client.on(Events.InteractionCreate, async interaction => {
                 ? active.map(p => `- <@${p.user_id}> desde ${rel(p.started_at)}`).join('\n')
                 : 'Sin participantes activos.';
 
-              return `👥 **Grupo #${g.id}: ${g.title}**\nLíder: <@${g.leader_id}>\n${miembros}`;
+              return `👥 **Grupo #${g.id}: ${g.title}**\n${miembros}`;
             }).join('\n\n')
           : 'No hay grupos activos.';
 
         const embed = new EmbedBuilder()
           .setTitle('📋 Estado actual de farmeo')
           .addFields(
-            {
-              name: 'Farmeo solo',
-              value: solo.slice(0, 1024)
-            },
-            {
-              name: 'Farmeo grupal',
-              value: grupos.slice(0, 1024)
-            }
+            { name: 'Farmeo solo', value: solo.slice(0, 1024) },
+            { name: 'Farmeo grupal', value: grupos.slice(0, 1024) }
           );
 
-        return interaction.editReply({
-          embeds: [embed]
-        });
+        return interaction.editReply({ embeds: [embed] });
       }
 
       if (interaction.commandName === 'ranking') {
@@ -356,9 +326,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .setTitle(`🏆 Ranking de farmeo: ${periodo}`)
           .setDescription(text.slice(0, 4096));
 
-        return interaction.editReply({
-          embeds: [embed]
-        });
+        return interaction.editReply({ embeds: [embed] });
       }
 
       if (interaction.commandName === 'historial') {
@@ -371,9 +339,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const groupId = Number(idRaw);
       const g = db.getGroup(groupId);
 
-      if (!g) {
-        return interaction.editReply('⚠️ Este grupo ya no existe.');
-      }
+      if (!g) return interaction.editReply('⚠️ Este grupo ya no existe.');
 
       if (action === 'join') {
         const r = db.joinGroup(
@@ -383,30 +349,20 @@ client.on(Events.InteractionCreate, async interaction => {
           username(interaction)
         );
 
-        if (!r.ok) {
-          return interaction.editReply(`⚠️ ${r.reason}`);
-        }
+        if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
         await refreshGroupMessage(interaction, groupId);
 
-        return interaction.editReply(
-          `✅ Te uniste al grupo #${groupId}.`
-        );
+        return interaction.editReply(`✅ Te uniste al grupo #${groupId}.`);
       }
 
       if (action === 'leave') {
-        const r = db.leaveGroup(
-          interaction.guildId,
-          groupId,
-          interaction.user.id
-        );
+        const r = db.leaveGroup(interaction.guildId, groupId, interaction.user.id);
 
-        if (!r.ok) {
-          return interaction.editReply(`⚠️ ${r.reason}`);
-        }
+        if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
         await sendOwnerDM(
-          `🚪 Usuario salió del grupo\nUsuario: ${interaction.user.tag}\nGrupo: #${groupId} ${g.title}\nTiempo: ${fmt(r.duration_seconds)}`
+          `🚪 Salió de grupo\nUsuario: ${interaction.user.tag}\nGrupo: #${groupId} ${g.title}\nTiempo: ${fmt(r.duration_seconds)}`
         );
 
         await refreshGroupMessage(interaction, groupId);
@@ -417,16 +373,9 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if (action === 'end') {
-        const r = db.closeGroup(
-          interaction.guildId,
-          groupId,
-          interaction.user.id,
-          true
-        );
+        const r = db.closeGroup(interaction.guildId, groupId, interaction.user.id, true);
 
-        if (!r.ok) {
-          return interaction.editReply(`⚠️ ${r.reason}`);
-        }
+        if (!r.ok) return interaction.editReply(`⚠️ ${r.reason}`);
 
         await sendOwnerDM(
           `🔴 Grupo terminado\nGrupo: #${groupId} ${g.title}\nCerrado por: ${interaction.user.tag}\nParticipantes cerrados: ${r.closed_count}`
@@ -434,22 +383,15 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await refreshGroupMessage(interaction, groupId);
 
-        return interaction.editReply(
-          `🔴 Grupo #${groupId} terminado.`
-        );
+        return interaction.editReply(`🔴 Grupo #${groupId} terminado.`);
       }
     }
   } catch (err) {
-    console.error(err);
+    console.error('Error en interacción:', err);
 
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply('❌ Error interno.');
-      } else {
-        await interaction.reply({
-          content: '❌ Error interno.',
-          flags: 64
-        });
       }
     } catch (_) {}
   }
