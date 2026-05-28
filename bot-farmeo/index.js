@@ -29,7 +29,11 @@ server.listen(process.env.PORT || 3000, () => {
 });
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 function fmt(seconds) {
@@ -70,6 +74,20 @@ function sinceFor(period) {
 
   d.setHours(0, 0, 0, 0);
   return d.getTime();
+}
+
+function cleanDiscordId(text) {
+  if (!text) return null;
+  return text.replace(/[<@!>]/g, '').trim();
+}
+
+function getUserPeriodStats(guildId, userId, periodo) {
+  const rows = db.ranking(guildId, sinceFor(periodo));
+
+  return rows.find(r => r.user_id === userId) || {
+    total_seconds: 0,
+    sesiones: 0
+  };
 }
 
 const commands = [
@@ -239,6 +257,63 @@ client.once(Events.ClientReady, async c => {
   }
 });
 
+client.on(Events.MessageCreate, async message => {
+  try {
+    if (message.author.bot || !message.guild) return;
+
+    const args = message.content.trim().split(/\s+/);
+    const command = args[0]?.toLowerCase();
+
+    if (command !== '!fechas') return;
+
+    const userId = cleanDiscordId(args[1]);
+
+    if (!userId || !/^\d{17,20}$/.test(userId)) {
+      return message.reply(
+        '⚠️ Uso correcto: `!fechas ID_DE_DISCORD`\nEjemplo: `!fechas 1508988018290065539`\nTambién puedes usar: `!fechas @usuario`'
+      );
+    }
+
+    const hoy = getUserPeriodStats(message.guild.id, userId, 'hoy');
+    const semana = getUserPeriodStats(message.guild.id, userId, 'semana');
+    const mes = getUserPeriodStats(message.guild.id, userId, 'mes');
+    const todo = getUserPeriodStats(message.guild.id, userId, 'todo');
+
+    const embed = new EmbedBuilder()
+      .setTitle('📅 Horas de farmeo')
+      .setDescription(`Usuario: <@${userId}>`)
+      .addFields(
+        {
+          name: '📌 Hoy',
+          value: `⏱️ ${fmt(hoy.total_seconds)}\n📦 ${hoy.sesiones} sesiones`,
+          inline: true
+        },
+        {
+          name: '📆 Semana',
+          value: `⏱️ ${fmt(semana.total_seconds)}\n📦 ${semana.sesiones} sesiones`,
+          inline: true
+        },
+        {
+          name: '🗓️ Mes',
+          value: `⏱️ ${fmt(mes.total_seconds)}\n📦 ${mes.sesiones} sesiones`,
+          inline: true
+        },
+        {
+          name: '🏁 Total',
+          value: `⏱️ ${fmt(todo.total_seconds)}\n📦 ${todo.sesiones} sesiones`,
+          inline: false
+        }
+      )
+      .setFooter({ text: 'Solo cuenta farmeos ya terminados.' });
+
+    return message.reply({ embeds: [embed] });
+
+  } catch (err) {
+    console.error('Error en !fechas:', err);
+    return message.reply('❌ Error interno usando `!fechas`.');
+  }
+});
+
 client.on(Events.InteractionCreate, async interaction => {
   try {
     if (interaction.isChatInputCommand()) {
@@ -326,6 +401,7 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
       }
+
       if (interaction.commandName === 'estado') {
         const st = db.activeStatus(guildId);
 
