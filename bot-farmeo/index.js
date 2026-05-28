@@ -326,7 +326,6 @@ client.on(Events.InteractionCreate, async interaction => {
           return;
         }
       }
-
       if (interaction.commandName === 'estado') {
         const st = db.activeStatus(guildId);
 
