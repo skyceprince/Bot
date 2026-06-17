@@ -476,7 +476,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
         await refreshGroupMessage(interaction, groupId);
 
-        return interaction.editReply(`✅ Te uniste al grupo #${groupId}.`);
+        return interaction.editReply(`✅ Te uniste al grupo: #${groupId}.`);
       }
 
       if (action === 'leave') {
