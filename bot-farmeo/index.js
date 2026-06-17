@@ -208,7 +208,7 @@ function groupButtons(groupId, disabled = false) {
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`join:${groupId}`)
-        .setLabel('Unirme')
+        .setLabel('Unirse')
         .setEmoji('✅')
         .setStyle(ButtonStyle.Success)
         .setDisabled(disabled),
